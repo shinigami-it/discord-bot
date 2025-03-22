@@ -17,11 +17,17 @@ Shinigami is a versatile Discord bot under development, capable of handling a wi
 
 ## License
 
-This project is licensed under the **MIT License**.
+This project is licensed under the **Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 International (CC BY-NC-ND 4.0)** license.
 
 ### License Summary:
 
-- **Permission**: You can freely use, modify, and distribute the project, provided that proper credit is given.
+1. **Attribution**: You must give appropriate credit, provide a link to the license, and indicate if changes were made. You may do so in any reasonable manner, but not in any way that suggests the licensor endorses you or your use.
+2. **NonCommercial**: You may not use the material for commercial purposes.
+3. **NoDerivatives**: If you remix, transform, or build upon the material, you may not distribute the modified material.
+
+This license only allows sharing and usage of the code without modification or commercial use.
+
+For more details, visit: [Creative Commons License](https://creativecommons.org/licenses/by-nc-nd/4.0/)
 
 ## Setup and Usage
 
@@ -39,7 +45,7 @@ This project is licensed under the **MIT License**.
 
 #### Software Requirements:
 - **Operating System**: Windows, Linux, or macOS.
-- **Python**: Python 3.8 or later.
-- **Dependencies**: Install dependencies using:
+- **Node.js**: Node.js version 16 or higher.
+- **Dependencies**: Install dependencies from `package.json` using:
   ```bash
   npm install
