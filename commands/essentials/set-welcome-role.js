@@ -9,7 +9,8 @@ module.exports = {
             .setName('role')
             .setDescription('Role to give new members upon joining')
         )
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+        .setDMPermission(false),
 
     async execute(interaction) {
         try {

@@ -1,53 +1,58 @@
-const { ActivityType } = require('discord.js');
+const { ActivityType, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const Guild = require('../models/guild');
+const axios = require('axios');
 const chalk = require('chalk');
+const moment = require('moment-timezone');
+const { checkNewsPeriodically } = require('./steamNewsCheck');
+require('dotenv').config();
+
+const TWITCH_CLIENT_ID = process.env.TWITCH_CLIENT_ID;
+let TWITCH_ACCESS_TOKEN = process.env.TWITCH_ACCESS_TOKEN;
+let wasLive = {};  // Track live status per Twitch username
+
+async function refreshTwitchToken() {
+    try {
+        const response = await axios.post('https://id.twitch.tv/oauth2/token', null, {
+            params: {
+                client_id: TWITCH_CLIENT_ID,
+                client_secret: process.env.TWITCH_CLIENT_SECRET,
+                grant_type: 'client_credentials'
+            }
+        });
+        TWITCH_ACCESS_TOKEN = response.data.access_token;
+        console.log(chalk.green('Twitch token refreshed successfully.'));
+    } catch (error) {
+        console.error(chalk.red('Failed to refresh Twitch token:', error));
+    }
+}
 
 module.exports = {
     name: 'ready',
     once: true,
     async execute(client) {
-        await console.log(chalk.magenta.bold.underline(`Logged in as ${client.user.tag} ✅`));
+        console.log(chalk.magenta.bold.underline(`Logged in as ${client.user.tag} ✅`));
 
-        client.user.setActivity('discord.gg/ZyRe42SR4C', {
+        client.user.setActivity('Yuki - The Future is incoming', {
             type: ActivityType.Streaming,
             url: 'https://twitch.tv/dashund007'
         });
 
-        const specificServerId = '1306704630171963422';
-        const roleCountChannelId = '1311744998798262344';
-        const roleId = '1307756165849153688';
-        let roleCountOld = 0;
+        let guildCountOld = 0;
         let memberCountsOld = {};
+        const skippedGuilds = new Set();
+
+        await updateGuildCount(client);
 
         client.on('guildMemberAdd', async (member) => {
             await updateMemberCount(member.guild);
-            if (member.guild.id === specificServerId) {
-                await updateRoleCount(member.guild);
-            }
         });
 
         client.on('guildMemberRemove', async (member) => {
             await updateMemberCount(member.guild);
-            if (member.guild.id === specificServerId) {
-                await updateRoleCount(member.guild);
-            }
-        });
-
-        client.on('guildMemberUpdate', async (oldMember, newMember) => {
-            if (newMember.guild.id === specificServerId) {
-                const hadRole = oldMember.roles.cache.has(roleId);
-                const hasRole = newMember.roles.cache.has(roleId);
-                if (hadRole !== hasRole) {
-                    await updateRoleCount(newMember.guild);
-                }
-            }
         });
 
         for (const guild of client.guilds.cache.values()) {
             await updateMemberCount(guild);
-            if (guild.id === specificServerId) {
-                await updateRoleCount(guild);
-            }
         }
 
         async function updateMemberCount(guild) {
@@ -57,51 +62,131 @@ module.exports = {
 
                 if (memberCountsOld[guild.id] !== totalMembers) {
                     memberCountsOld[guild.id] = totalMembers;
-
                     const guildData = await Guild.findOne({ where: { id: guild.id } });
                     if (guildData && guildData.memberCountChannelId) {
                         const memberCountChannel = await guild.channels.fetch(guildData.memberCountChannelId);
                         if (memberCountChannel) {
                             await memberCountChannel.setName(`Members: ${totalMembers}`);
-                            console.log(chalk.green(`Updated member count channel for guild `) + chalk.red.bold.underline(`${guild.name} to: ${totalMembers}\n`));
-                        } else {
-                            console.error(chalk.red(`Member count channel with ID `) + chalk.red.bold.underline(`${guildData.memberCountChannelId} not found.\n`));
+                            console.log(chalk.green(`Updated member count for `) + chalk.red.bold(`${guild.name}: ${totalMembers}\n`));
                         }
                     }
                 }
             } catch (error) {
-                console.error(chalk.red(`Error updating member count for guild ${guild.name}:`, error));
+                console.error(chalk.red(`Error updating member count for ${guild.name}:`, error));
             }
         }
 
-        async function updateRoleCount(guild) {
+        async function updateGuildCount(client) {
             try {
-                await guild.members.fetch();
-                await guild.channels.fetch();
-
-                const roleCount = guild.members.cache.filter(member =>
-                    member.roles.cache.has(roleId)
-                ).size;
-
-                if (roleCount !== roleCountOld) {
-                    roleCountOld = roleCount;
-
+                const guildCount = client.guilds.cache.size;
+                if (guildCount !== guildCountOld) {
+                    guildCountOld = guildCount;
                     await client.user.setPresence({
-                        activities: [{ name: `Customers: ${roleCount}`, type: ActivityType.Watching }],
-                        status: 'dnd',
+                        activities: [{ name: `Guilds: ${guildCount}`, type: ActivityType.Watching }]
                     });
+                    console.log(chalk.green(`Updated guild count: ${guildCount}`));
+                }
+            } catch (error) {
+                console.error(chalk.red(`Error updating guild count:`, error));
+            }
+        }
 
-                    const roleCountChannel = await guild.channels.fetch(roleCountChannelId);
-                    if (roleCountChannel) {
-                        await roleCountChannel.setName(`Customers: ${roleCount}`);
-                        console.log(chalk.yellow(`Updated role count channel in JF to: `) + chalk.white.bold.underline(`Customers: ${roleCount}\n`));
-                    } else {
-                        console.error(chalk.red(`Role count channel with ID ${roleCountChannelId} not found in specific guild.\n`));
+        console.log(chalk.blueBright(`Running Steam check...`));
+        checkNewsPeriodically(client);
+
+        async function checkTwitchLive() {
+            try {
+                for (const guild of client.guilds.cache.values()) {
+                    const guildData = await Guild.findOne({ where: { id: guild.id } });
+                    const twitchUsername = guildData ? guildData.twitchUsername : null;
+                    if (!twitchUsername) {
+                        if (!skippedGuilds.has(guild.id)) {
+                            console.log(chalk.yellow(`No Twitch username set for guild ${guild.name}, skipping...`));
+                            skippedGuilds.add(guild.id);
+                        }
+                        continue;
+                    }
+                    skippedGuilds.delete(guild.id);
+
+                    const twitchChannelId = guildData?.twitchChannelId;
+                    const pingRoleId = guildData?.twitchRoleId;
+                    const embedColor = guildData?.twitchEmbedColor || '#6400ff';
+                    const lastNotificationTime = guildData?.twitchLastNotification;
+
+                    const currentTimeBerlin = moment().tz('Europe/Berlin');  // Berlin timezone
+                    const cooldownTime = 2 * 60 * 60 * 1000;  // 2 hours cooldown
+
+                    try {
+                        const url = `https://api.twitch.tv/helix/streams?user_login=${twitchUsername}`;
+                        const response = await axios.get(url, {
+                            headers: {
+                                "Client-ID": TWITCH_CLIENT_ID,
+                                "Authorization": `Bearer ${TWITCH_ACCESS_TOKEN}`
+                            }
+                        });
+                        const stream = response.data.data[0];
+
+                        if (stream) {
+                            if (!lastNotificationTime || currentTimeBerlin.diff(moment(lastNotificationTime)) >= cooldownTime) {
+                                await guildData.update({ twitchLastNotification: currentTimeBerlin.toDate() });
+
+                                const twitchTitle = stream.title || "N/A";
+                                const twitchCategory = stream.game_name || "N/A";
+                                const userUrl = `https://api.twitch.tv/helix/users?login=${twitchUsername}`;
+                                const userResponse = await axios.get(userUrl, {
+                                    headers: {
+                                        "Client-ID": TWITCH_CLIENT_ID,
+                                        "Authorization": `Bearer ${TWITCH_ACCESS_TOKEN}`
+                                    }
+                                });
+                                const userData = userResponse.data.data[0];
+                                const twitchIcon = userData ? userData.profile_image_url : 'https://static-cdn.jtvnw.net/jtv_user_pictures/default-profile_image.jpg';
+                                const thumbnail = `https://static-cdn.jtvnw.net/previews-ttv/live_user_${twitchUsername.toLowerCase()}-400x225.jpg?timestamp=${Date.now()}`;
+                                const embed = new EmbedBuilder()
+                                    .setTitle(twitchTitle)
+                                    .setURL(`https://twitch.tv/${twitchUsername}`)
+                                    .setDescription(`**Game**\n${twitchCategory}`)
+                                    .setColor(embedColor)
+                                    .setAuthor({ name: `${twitchUsername} is now live on Twitch!`, iconURL: twitchIcon })
+                                    .setImage(thumbnail)
+                                    .setTimestamp()
+                                    .setFooter({ text: 'Yuki - Est. 2023', iconURL: 'https://i.imgur.com/le0aT56.png' });
+                                const button = new ButtonBuilder()
+                                    .setLabel('Watch Stream')
+                                    .setURL(`https://twitch.tv/${twitchUsername}`)
+                                    .setStyle(ButtonStyle.Link);
+                                const row = new ActionRowBuilder().addComponents(button);
+                                const channel = await client.channels.fetch(twitchChannelId);
+                                if (channel) {
+                                    await channel.send({
+                                        content: `<@&${pingRoleId}>`,
+                                        embeds: [embed],
+                                        components: [row]
+                                    });
+                                    console.log(chalk.bold.cyan(`Twitch notification sent for ${twitchUsername}!`));
+                                }
+                            } else {
+                                console.log(chalk.yellow(`${twitchUsername} is still live, but cooldown has not passed yet.`));
+                            }
+                        } else if (wasLive[twitchUsername]) {
+                            wasLive[twitchUsername] = false;
+                            console.log(chalk.bold.yellow(`${twitchUsername} is now offline.`));
+                        }
+                    } catch (error) {
+                        if (error.response && error.response.status === 401) {
+                            console.log(chalk.red('Twitch token expired, refreshing...'));
+                            await refreshTwitchToken();
+                        } else {
+                            console.error(chalk.red('Error fetching Twitch data:', error));
+                        }
                     }
                 }
             } catch (error) {
-                console.error(chalk.red(`Error updating role count for JF:`, error));
+                console.error(chalk.red('Error checking Twitch API:', error));
             }
         }
+
+        setInterval(checkTwitchLive, 1000 * 60);  // Check every minute
+        console.log(chalk.bold.green(`Twitch check is running!`));
     }
 };
